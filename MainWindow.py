@@ -9,6 +9,7 @@ from PIL import Image
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtWidgets import *
 
+from Utils.folders import clear_directory
 
 class Ui_MainWindow(object):
     file_path = ''
@@ -118,13 +119,14 @@ class Ui_MainWindow(object):
         self.InferenceButton.setObjectName("InferenceButton")
         self.InferenceButton.clicked.connect(self.infer)
         self.listView = QtWidgets.QListWidget(self.centralwidget)
+        self.listView.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         #
         ## *^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^
         ## Solve the "crash when scroll" problem of the listWidget; idk why honestly... but it works(?)
         ## setting horizontal scroll mode
-        #self.listView.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        # self.listView.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         ## resetting horizontal scroll mode
-        #self.listView.resetHorizontalScrollMode()
+        # self.listView.resetHorizontalScrollMode()
         ## *^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^
         #
         self.listView.setGeometry(QtCore.QRect(1160, 80, 191, 591))
@@ -191,16 +193,13 @@ class Ui_MainWindow(object):
 
     def yolov5_inference(self, path, model_size="small", conf_threshold=.75):
 
+        tmp_path = "./Inference/yolov5/runs/detect/exp/tmp/"
+        if not os.path.exists(tmp_path):
+            os.makedirs(tmp_path)
+        else:
+            clear_directory(tmp_path)
+
         starting_time = datetime.now()
-
-        print("193")
-
-        # Before adding more item I clear the list, so there's no danger of duplicates
-        self.listView.clear()
-        size = QtCore.QSize()
-        size.setWidth(191)
-
-        print("200")
 
         # Imposto il nome corretto del peso che yolov5 andrà a scaricare
         weight_name = 'yolov5n.pt'
@@ -215,14 +214,10 @@ class Ui_MainWindow(object):
         # Path where store the weights
         weight_path = f"./Weights/yolov5_w/{weight_name}"
 
-        print("215")
-
         # Check if the weight file is there; if is not, download it
         if not os.path.exists(weight_path):
             url = f'https://github.com/ultralytics/yolov5/releases/download/v6.2/{weight_name}'
             try:
-
-                print("222")
 
                 weight_path = wget.download(url, weight_path)
             except:
@@ -237,33 +232,22 @@ class Ui_MainWindow(object):
         # Set up the model with custom parameters
         model = yolov5.load(weight_path, verbose=False)
 
-        print("237")
-
         model.conf = (conf_threshold / 100)
         model.classes = [0]
         model.agnostic = False
         model.multi_label = False
 
-        print("244")
-
         # Actual inference
         results = model(path)
-
-        print("249")
 
         # Parse results
         predictions = results.pred[0]
 
         save_path = "./Inference/yolov5/runs/detect/exp"
 
-        print("256")
-
         try:
-
-            print("260")
             # Save the result in order to render it instead of the BBless image
             results.save(save_dir=save_path, exist_ok=True)
-            print("263")
 
         except Exception as e:
             msg = QMessageBox(MainWindow)
@@ -280,8 +264,6 @@ class Ui_MainWindow(object):
         new_photo_path = save_path + "/" + self.file_path.split('/')[-1]
         self.PhotoWidget.setPixmap(QtGui.QPixmap(new_photo_path))
 
-        print("280")
-
         # Create a copy of the original photo to crop out the detected persons
         # in order to show them in the "detected persons list"
         # orig_img = Image.open(path)
@@ -290,39 +272,29 @@ class Ui_MainWindow(object):
 
         try:
 
-            print("290")
+            # Before adding more item I clear the list, so there's no danger of duplicates
+            self.listView.clear()
+
             # For each box, create an ItemWidget to add to the Widget List(right side list)
             for box in boxes:
                 box = box.numpy()
-                box_aspect_ratio = max(box[2], box[3]) / min(box[2], box[3])
-                size.setHeight(int(185 * box_aspect_ratio))
-
-                print("297")
 
                 person = Image.open(path).copy().crop(box)
-                person = person.resize((191, int(191 * box_aspect_ratio)))
+                person_img_save_path = f"{save_path}/tmp/{int(box[0])}_{int(box[1])}_{int(box[2])}_{int(box[3])}.jpg"
+                person.save(person_img_save_path)
 
-                print("302")
-
-                icon = QtGui.QIcon(person.toqpixmap())
+                icon = QtGui.QIcon(QtGui.QPixmap(person_img_save_path))
                 item = QListWidgetItem(icon, '')
-                item.setSizeHint(size)
-                #self.listView.addItem(item)
+                self.listView.addItem(item)
 
         except Exception as e:
             print(e)
 
-        print("312")
-
         scores = predictions[:, 4]
         categories = predictions[:, 5]
 
-        print("317")
-
         ending_time = datetime.now()
         print(ending_time - starting_time)
-
-        print("322")
 
         pass
 
