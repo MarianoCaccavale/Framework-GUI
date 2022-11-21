@@ -7,9 +7,11 @@ import wget
 import yolov5
 from PIL import Image
 from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt5.QtCore import QSize
 from PyQt5.QtWidgets import *
 
 from Utils.folders import clear_directory
+from Widgets.DetectedPersonWidget import DetectedPersonWidget
 
 class Ui_MainWindow(object):
     file_path = ''
@@ -218,20 +220,19 @@ class Ui_MainWindow(object):
         if not os.path.exists(weight_path):
             url = f'https://github.com/ultralytics/yolov5/releases/download/v6.2/{weight_name}'
             try:
-
                 weight_path = wget.download(url, weight_path)
-            except:
+            except Exception as e:
                 msg = QMessageBox(MainWindow)
                 msg.setText("C'è stato un problema nel download dei pesi,\n\
                                 assicurati di essere connesso ad internet e riprova.")
                 msg.setWindowTitle("Attenzione")
                 msg.setDefaultButton(QMessageBox.Ok)
                 msg.exec_()
+                print(e)
                 pass
 
         # Set up the model with custom parameters
         model = yolov5.load(weight_path, verbose=False)
-
         model.conf = (conf_threshold / 100)
         model.classes = [0]
         model.agnostic = False
@@ -248,7 +249,6 @@ class Ui_MainWindow(object):
         try:
             # Save the result in order to render it instead of the BBless image
             results.save(save_dir=save_path, exist_ok=True)
-
         except Exception as e:
             msg = QMessageBox(MainWindow)
             msg.setText("Non è stato possibile eseguire la detection\n\
@@ -264,10 +264,6 @@ class Ui_MainWindow(object):
         new_photo_path = save_path + "/" + self.file_path.split('/')[-1]
         self.PhotoWidget.setPixmap(QtGui.QPixmap(new_photo_path))
 
-        # Create a copy of the original photo to crop out the detected persons
-        # in order to show them in the "detected persons list"
-        # orig_img = Image.open(path)
-
         boxes = predictions[:, :4]  # x1, y1, x2, y2
 
         try:
@@ -276,6 +272,7 @@ class Ui_MainWindow(object):
             self.listView.clear()
 
             # For each box, create an ItemWidget to add to the Widget List(right side list)
+            i = 1
             for box in boxes:
                 box = box.numpy()
 
@@ -283,9 +280,19 @@ class Ui_MainWindow(object):
                 person_img_save_path = f"{save_path}/tmp/{int(box[0])}_{int(box[1])}_{int(box[2])}_{int(box[3])}.jpg"
                 person.save(person_img_save_path)
 
-                icon = QtGui.QIcon(QtGui.QPixmap(person_img_save_path))
-                item = QListWidgetItem(icon, '')
+                personWidget = DetectedPersonWidget()
+                personWidget.setPersonImage(QtGui.QPixmap(person_img_save_path))
+                personWidget.setLabelName(f'Person #{i}')
+                personWidget.setCoords(f"{int(box[0])}_{int(box[1])}_{int(box[2])}_{int(box[3])}")
+                i += 1
+
+                item = QListWidgetItem(self.listView)
+
+                # Correggere le misure. Al momento sono troppo piccole per immagini grandi. Calcolare l'aspect ratio e
+                # poi l'altro lato
+                item.setSizeHint(QSize(180, 180))
                 self.listView.addItem(item)
+                self.listView.setItemWidget(item, personWidget)
 
         except Exception as e:
             print(e)
