@@ -1,20 +1,23 @@
 # -*- coding: utf-8 -*-
 import faulthandler
 import os
+import traceback
 from datetime import datetime
 
 import wget
 import yolov5
 from PIL import Image
 from PyQt5 import QtCore, QtGui, QtWidgets
-from PyQt5.QtCore import QSize
+from PyQt5.QtCore import QSize, QEvent
 from PyQt5.QtWidgets import *
 
 from Utils.folders import clear_directory
-from Widgets.DetectedPersonWidget import DetectedPersonWidget
+from Widgets.DetectedPerson.DetectedPersonWidget import DetectedPersonWidget, DetectedPerson
 
-class Ui_MainWindow(object):
+
+class Ui_MainWindow(QMainWindow):
     file_path = ''
+    detected_persons = []
 
     def setupUi(self, MainWindow):
         MainWindow.setObjectName("MainWindow")
@@ -122,19 +125,16 @@ class Ui_MainWindow(object):
         self.InferenceButton.clicked.connect(self.infer)
         self.listView = QtWidgets.QListWidget(self.centralwidget)
         self.listView.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
-        #
-        ## *^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^
-        ## Solve the "crash when scroll" problem of the listWidget; idk why honestly... but it works(?)
-        ## setting horizontal scroll mode
-        # self.listView.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
-        ## resetting horizontal scroll mode
-        # self.listView.resetHorizontalScrollMode()
-        ## *^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^*^
-        #
+        self.listView.alternatingRowColors()
         self.listView.setGeometry(QtCore.QRect(1160, 80, 191, 591))
         self.listView.setIconSize(QtCore.QSize(185, 185))
         self.listView.setItemAlignment(QtCore.Qt.AlignCenter)
         self.listView.setObjectName("listView")
+
+        self.listView.itemClicked.connect(self.track)
+
+        self.listView.installEventFilter(self)
+
         self.label_2 = QtWidgets.QLabel(self.centralwidget)
         self.label_2.setGeometry(QtCore.QRect(1160, 60, 181, 16))
         font = QtGui.QFont()
@@ -163,9 +163,34 @@ class Ui_MainWindow(object):
         self.comboBox.addItem("Large")
         self.comboBox.setCurrentIndex(1)
 
+    def eventFilter(self, source, event):
+        # Filter the event that happen in the windows
+        if event.type() == QEvent.ContextMenu and source is self.listView:
+            # If the event is right click(context menu click) and comes from the listView, then show the context menu
+            menu = QMenu(self)
+            copy_action = menu.addAction("Copy feature vector")
+            track_action = menu.addAction("Track in frames")
+
+            # Get the action that the user clicked
+            selected_action = menu.exec_(event.globalPos())
+            # Find the widget/item the user selected
+            selected_item = source.itemAt(event.pos())
+            detected_person = self.detected_persons[self.listView.indexFromItem(selected_item).row()]
+
+            # Based on the action, do something
+            if selected_action == copy_action:
+                print(f'Copy feature: {detected_person.getDetectedPerson().getCoord()}')
+            elif selected_action == track_action:
+                print(f'Track: {detected_person.getDetectedPerson().getCoord()}')
+
+            return True
+
+        return super().eventFilter(source, event)
+
     def select_file(self, path):
         self.file_path = self.model.filePath(path)
         self.PhotoWidget.setPixmap(QtGui.QPixmap(self.file_path))
+        self.listView.clear()
 
     def infer(self):
 
@@ -180,8 +205,8 @@ class Ui_MainWindow(object):
             return
 
         print(
-            "Valori inference: " + self.NetComboBox.currentText() + " " + self.comboBox.currentText() + " threshold: " + str(
-                self.ConfidenceSlider.value()))
+            "Valori inference: " + self.NetComboBox.currentText() + " " + self.comboBox.currentText() +
+            " threshold: " + str(self.ConfidenceSlider.value()))
 
         if self.NetComboBox.currentText() == "Yolov5":
             self.yolov5_inference(self.file_path, model_size=self.comboBox.currentText(),
@@ -228,7 +253,7 @@ class Ui_MainWindow(object):
                 msg.setWindowTitle("Attenzione")
                 msg.setDefaultButton(QMessageBox.Ok)
                 msg.exec_()
-                print(e)
+                traceback.print_exc()
                 pass
 
         # Set up the model with custom parameters
@@ -256,8 +281,7 @@ class Ui_MainWindow(object):
             msg.setWindowTitle("Attenzione")
             msg.setDefaultButton(QMessageBox.Ok)
             msg.exec_()
-
-            print(e)
+            traceback.print_exc()
             pass
 
         # Load the new image with BB
@@ -270,32 +294,42 @@ class Ui_MainWindow(object):
 
             # Before adding more item I clear the list, so there's no danger of duplicates
             self.listView.clear()
+            # Before adding more detected persons I clear the list, so there's no danger of duplicates
+            self.detected_persons.clear()
 
             # For each box, create an ItemWidget to add to the Widget List(right side list)
             i = 1
             for box in boxes:
                 box = box.numpy()
 
+                # Create a copy of the image, so I don't work on the original(I need it)
                 person = Image.open(path).copy().crop(box)
+                # Resize the image to have a maximum size but still keeping the same aspect_ratio
+                person.thumbnail((111, 181))
+                # IMPORTANT: save the image back, so it will not be destroyed after exiting this scope. If not saved,
+                # the image would cause a segmentation fault error on scrolling the listWidget(took 3 days to figure
+                # it out)
                 person_img_save_path = f"{save_path}/tmp/{int(box[0])}_{int(box[1])}_{int(box[2])}_{int(box[3])}.jpg"
                 person.save(person_img_save_path)
 
-                personWidget = DetectedPersonWidget()
+                # Setup custom widget
+                detectedPerson = DetectedPerson(box)
+                personWidget = DetectedPersonWidget(detectedPerson)
                 personWidget.setPersonImage(QtGui.QPixmap(person_img_save_path))
                 personWidget.setLabelName(f'Person #{i}')
-                personWidget.setCoords(f"{int(box[0])}_{int(box[1])}_{int(box[2])}_{int(box[3])}")
+                personWidget.setCoord(box)
                 i += 1
+                self.detected_persons.append(personWidget)
 
                 item = QListWidgetItem(self.listView)
 
-                # Correggere le misure. Al momento sono troppo piccole per immagini grandi. Calcolare l'aspect ratio e
-                # poi l'altro lato
-                item.setSizeHint(QSize(180, 180))
+                # Set custom widget size, so it shows properly
+                item.setSizeHint(QSize(150, 240))
                 self.listView.addItem(item)
                 self.listView.setItemWidget(item, personWidget)
 
         except Exception as e:
-            print(e)
+            traceback.print_exc()
 
         scores = predictions[:, 4]
         categories = predictions[:, 5]
@@ -303,6 +337,10 @@ class Ui_MainWindow(object):
         ending_time = datetime.now()
         print(ending_time - starting_time)
 
+        pass
+
+    def track(self, item):
+        print(self.detected_persons[self.listView.currentRow()].getDetectedPerson().getCoord())
         pass
 
     def yolov6_inference(self, path, model_size="small", conf_threshold=.75):
