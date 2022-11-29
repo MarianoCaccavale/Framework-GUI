@@ -1,1 +1,4 @@
 /Inference/yolov5/runs/detect/exp/
+/Inference/yolov6/runs/detect/exp/
+
+*.pyc
