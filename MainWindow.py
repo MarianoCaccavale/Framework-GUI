@@ -7,6 +7,7 @@ from datetime import datetime
 
 import cv2
 import numpy as np
+from numpy import random
 from tqdm import tqdm
 
 from Utils.folders import clear_directory
@@ -14,7 +15,7 @@ from Widgets.DetectedPerson.DetectedPersonWidget import DetectedPersonWidget, De
 
 import torch
 import wget
-import yolov5
+
 from PIL import Image
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import QSize, QEvent
@@ -235,6 +236,8 @@ class Ui_MainWindow(QMainWindow):
 
     def yolov5_inference(self, path, model_size="small", conf_threshold=.75):
 
+        import yolov5
+
         tmp_path = "./Inference/yolov5/runs/detect/exp/tmp"
         if not os.path.exists(tmp_path):
             os.makedirs(tmp_path)
@@ -374,11 +377,11 @@ class Ui_MainWindow(QMainWindow):
         weight_name = 'yolov6n.pt'
 
         if model_size.lower() == "small":
-            weight_name = "yolov6s_base.pt"
+            weight_name = "yolov6s.pt"
         elif model_size.lower() == "medium":
-            weight_name = "yolov6m_base.pt"
+            weight_name = "yolov6m.pt"
         elif model_size.lower() == "large":
-            weight_name = "yolov6l_base.pt"
+            weight_name = "yolov6l.pt"
 
         # Path where store the weights
         weight_path = f"./Weights/yolov6_w/{weight_name}"
@@ -403,7 +406,7 @@ class Ui_MainWindow(QMainWindow):
         # The inferer then works as a wrapper for the model, and use it privately. Given the fact that the inferer not
         # only setyp the model, but pre/post-process the images, i still need it(or its functions at least)
         inferer = Inferer(path, weight_path, 'cpu', "./Models/yolov6/data/coco.yaml", 640, False)
-        #Extract the setupped model from the Inferer
+        # Extract the setupped model from the Inferer
         model = inferer.model
         inferer.img_size = inferer.check_img_size(inferer.img_size, s=inferer.stride)  # check image size
 
@@ -500,7 +503,149 @@ class Ui_MainWindow(QMainWindow):
         return
 
     def yolov7_inference(self, path, model_size="small", conf_threshold=.75):
-        pass
+
+        sys.path.append('.\Models\yolov7')
+
+        from utils.general import check_img_size, non_max_suppression, scale_coords
+        from models.experimental import attempt_load
+        from utils.datasets import LoadImages
+        from utils.plots import plot_one_box
+
+        tmp_path = "./Inference/yolov7/runs/detect/exp/tmp"
+        if not os.path.exists(tmp_path):
+            os.makedirs(tmp_path)
+        else:
+            clear_directory(tmp_path)
+
+        starting_time = datetime.now()
+
+        # Set the corerct weight's name that the net will load
+        # TODO probably to delete
+        weight_name = 'yolov7-w6.pt'
+
+        if model_size.lower() == "small":
+            weight_name = "yolov7-e6.pt"
+        elif model_size.lower() == "medium":
+            weight_name = "yolov7-d6.pt"
+        elif model_size.lower() == "large":
+            weight_name = "yolov7-e6e.pt"
+
+        # Path where store the weights
+        weight_path = f"./Weights/yolov7_w/{weight_name}"
+
+        # Check if the weight file is there; if is not, download it
+        if not os.path.exists(weight_path):
+            url = f'https://github.com/WongKinYiu/yolov7/releases/download/v0.1/{weight_name}'
+            try:
+                weight_path = wget.download(url, weight_path)
+            except:
+                msg = QMessageBox(MainWindow)
+                msg.setText("C'è stato un problema nel download dei pesi, assicurati di essere connesso ad internet e "
+                            "riprova.")
+                msg.setWindowTitle("Attenzione")
+                msg.setDefaultButton(QMessageBox.Ok)
+                msg.exec_()
+                traceback.print_exc()
+                return
+
+        # Load model
+        model = attempt_load(weight_path, map_location='cpu')  # load FP32 model
+        stride = int(model.stride.max())  # model stride
+        imgsz = check_img_size(640, s=stride)  # check img_size
+
+        save_path = "./Inference/yolov7/runs/detect/exp"
+
+        # Load image
+        dataset = LoadImages(path, img_size=imgsz, stride=stride)
+
+        # Get names and colors
+        names = model.module.names if hasattr(model, 'module') else model.names
+        colors = [[random.randint(0, 255) for _ in range(3)] for _ in names]
+
+        for path, img, im0s, vid_cap in dataset:
+            img = torch.from_numpy(img).to('cpu')
+            img = img.float()  # uint8 to fp16/32
+            img /= 255.0  # 0 - 255 to 0.0 - 1.0
+            if img.ndimension() == 3:
+                img = img.unsqueeze(0)
+
+            # Inference
+            with torch.no_grad():  # Calculating gradients would cause a GPU memory leak
+                pred = model(img, augment=False)[0]
+
+            conf_threshold /= 100
+
+            # Apply NMS
+            pred = non_max_suppression(pred, conf_threshold, 0.45, classes=[0])
+
+            # Process detections
+            for i, det in enumerate(pred):  # detections per image
+                p, s, im0, frame = path, '', im0s, getattr(dataset, 'frame', 0)
+
+                if len(det):
+                    # Rescale boxes from img_size to im0 size
+                    det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
+
+                    # Write results
+                    for *xyxy, conf, cls in reversed(det):
+                        label = f'{names[int(cls)]} {conf:.2f}'
+                        plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=2)
+
+            # Save the new image with BB
+            img_src = np.asarray(im0)
+            new_photo_path = save_path + "/" + self.file_path.split('/')[-1]
+            cv2.imwrite(new_photo_path, img_src)
+
+            # Load the image with BB
+            self.PhotoWidget.setPixmap(QtGui.QPixmap(new_photo_path))
+
+            boxes = pred[0][:, :4]  # x1, y1, x2, y2
+
+            try:
+
+                # Before adding more item I clear the list, so there's no danger of duplicates
+                self.listView.clear()
+                # Before adding more detected persons I clear the list, so there's no danger of duplicates
+                self.detected_persons.clear()
+
+                # For each box, create an ItemWidget to add to the Widget List(right side list)
+                i = 1
+                for box in boxes:
+                    box = box.numpy()
+
+                    # Create a copy of the image, so I don't work on the original(I need it)
+                    person = Image.open(path).copy().crop(box)
+                    # Resize the image to have a maximum size but still keeping the same aspect_ratio
+                    person.thumbnail((111, 181))
+                    # IMPORTANT: save the image back, so it will not be destroyed after exiting this scope. If not saved,
+                    # the image would cause a segmentation fault error on scrolling the listWidget(took 3 days to figure
+                    # it out)
+                    person_img_save_path = f"{tmp_path}/{int(box[0])}_{int(box[1])}_{int(box[2])}_{int(box[3])}.jpg"
+                    person.save(person_img_save_path)
+
+                    # Setup custom widget
+                    detectedPerson = DetectedPerson(box)
+                    personWidget = DetectedPersonWidget(detectedPerson)
+                    personWidget.setPersonImage(QtGui.QPixmap(person_img_save_path))
+                    personWidget.setLabelName(f'Person #{i}')
+                    personWidget.setCoord(box)
+                    i += 1
+                    self.detected_persons.append(personWidget)
+
+                    item = QListWidgetItem(self.listView)
+
+                    # Set custom widget size, so it shows properly
+                    item.setSizeHint(QSize(150, 240))
+                    self.listView.addItem(item)
+                    self.listView.setItemWidget(item, personWidget)
+
+            except:
+                traceback.print_exc()
+
+        ending_time = datetime.now()
+        print(ending_time - starting_time)
+
+        return
 
     def retranslateUi(self, MainWindow):
         _translate = QtCore.QCoreApplication.translate
@@ -515,9 +660,6 @@ class Ui_MainWindow(QMainWindow):
 
 if __name__ == "__main__":
     faulthandler.enable()  # start @ the beginning
-
-    sys.path.append('./Models/yolov5')
-    sys.path.append('./Models/yolov7')
 
     app = QtWidgets.QApplication(sys.argv)
     MainWindow = QtWidgets.QMainWindow()

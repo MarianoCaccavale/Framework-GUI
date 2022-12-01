@@ -1,4 +1,7 @@
 /Inference/yolov5/runs/detect/exp/
 /Inference/yolov6/runs/detect/exp/
+/Inference/yolov7/runs/detect/exp/
+/Weights/yolov7_w/
 
 *.pyc
+
